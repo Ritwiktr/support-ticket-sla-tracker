@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sla-tracker-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: sla_tracker
+    ports:
+      - "55432:5432"
+    volumes:
+      - sla_tracker_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sla_tracker"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  sla_tracker_pgdata:
