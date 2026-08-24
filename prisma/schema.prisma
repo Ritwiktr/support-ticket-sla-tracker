@@ -1,0 +1,84 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  REPORTER
+  AGENT
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+model User {
+  id           String    @id @default(cuid())
+  name         String
+  email        String    @unique
+  passwordHash String
+  role         UserRole
+  createdAt    DateTime  @default(now()) @db.Timestamptz(3)
+  reportedTickets Ticket[] @relation("TicketReporter")
+  assignedTickets Ticket[] @relation("TicketAssignee")
+  comments     Comment[]
+}
+
+model Ticket {
+  id                   String       @id @default(cuid())
+  title                String
+  description          String
+  priority             Priority
+  status               TicketStatus @default(OPEN)
+  reporterId           String
+  reporter             User         @relation("TicketReporter", fields: [reporterId], references: [id])
+  assigneeId           String?
+  assignee             User?        @relation("TicketAssignee", fields: [assigneeId], references: [id])
+  createdAt            DateTime     @default(now()) @db.Timestamptz(3)
+  firstResponseAt      DateTime?    @db.Timestamptz(3)
+  resolvedAt           DateTime?    @db.Timestamptz(3)
+  firstResponseDueAt   DateTime     @db.Timestamptz(3)
+  resolutionDueAt      DateTime     @db.Timestamptz(3)
+  comments             Comment[]
+
+  @@index([status])
+  @@index([priority])
+  @@index([assigneeId])
+  @@index([createdAt])
+  @@index([status, priority])
+  @@index([reporterId])
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  content   String
+  ticketId  String
+  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id])
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([ticketId, createdAt])
+  @@index([authorId])
+}
+
+model Holiday {
+  id        String   @id @default(cuid())
+  date      DateTime @unique @db.Date
+  name      String
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+}
