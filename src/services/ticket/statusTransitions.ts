@@ -25,3 +25,8 @@ export function assertValidTransition(from: TicketStatus, to: TicketStatus): voi
 export function allowedTransitions(from: TicketStatus): readonly TicketStatus[] {
   return ALLOWED[from];
 }
+
+/** Unassigned tickets are claimed by the acting agent when work actually starts or the issue is marked resolved. Closing from the queue does not claim them. */
+export function shouldClaimUnassignedTicket(nextStatus: TicketStatus): boolean {
+  return nextStatus === "IN_PROGRESS" || nextStatus === "RESOLVED";
+}

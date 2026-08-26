@@ -18,7 +18,7 @@ import {
 import { toIsoUtc } from "../sla/businessHours";
 import { AppError } from "../../validation/errors";
 import { requireNonEmpty, requirePriority, requireStatus } from "../../validation/ticket";
-import { assertValidTransition } from "./statusTransitions";
+import { assertValidTransition, shouldClaimUnassignedTicket } from "./statusTransitions";
 import type { AuthUser } from "../../auth/jwt";
 
 export type TicketView = {
@@ -89,6 +89,19 @@ function toSlaView(sla: SLAInfo): GraphQlSlaInfo {
     firstResponseCompleted: sla.firstResponseCompleted,
     resolutionCompleted: sla.resolutionCompleted,
   };
+}
+
+function reporterScope(actor: AuthUser): { reporterId: string } | Record<never, never> {
+  if (actor.role === "AGENT") {
+    return {};
+  }
+  return { reporterId: actor.id };
+}
+
+function assertCanViewTicket(actor: AuthUser, ticket: TicketRecord): void {
+  if (actor.role !== "AGENT" && ticket.reporterId !== actor.id) {
+    throw new AppError("Ticket not found.", ErrorCode.TICKET_NOT_FOUND);
+  }
 }
 
 export class TicketService {
@@ -164,29 +177,35 @@ export class TicketService {
     return this.toView(ticket, createdAt);
   }
 
-  async getTicket(id: string) {
+  async getTicket(actor: AuthUser, id: string) {
     const ticket = await this.tickets.findById(id);
     if (ticket === null) {
       throw new AppError("Ticket not found.", ErrorCode.TICKET_NOT_FOUND);
     }
+    assertCanViewTicket(actor, ticket);
     return this.toView(ticket);
   }
 
-  async listTickets(input: {
-    status?: TicketStatus;
-    priority?: Priority;
-    assigneeId?: string;
-    slaState?: SLAState;
-    take?: number | null;
-    cursor?: string | null;
-  }) {
+  async listTickets(
+    actor: AuthUser,
+    input: {
+      status?: TicketStatus;
+      priority?: Priority;
+      assigneeId?: string;
+      slaState?: SLAState;
+      take?: number | null;
+      cursor?: string | null;
+    },
+  ) {
     const take = Math.min(Math.max(input.take ?? 20, 1), 100);
+    const scope = reporterScope(actor);
 
     if (input.slaState !== undefined) {
       const all = await this.tickets.listMatching({
-        ...(input.status !== undefined ? { status: input.status } : {}),
+        ...(input.status !== undefined ? { status: input.status } : { statusIn: ["OPEN", "IN_PROGRESS"] }),
         ...(input.priority !== undefined ? { priority: input.priority } : {}),
         ...(input.assigneeId !== undefined ? { assigneeId: input.assigneeId } : {}),
+        ...scope,
       });
       const holidaySet = await this.holidays.dateKeySet();
       const now = new Date();
@@ -243,6 +262,7 @@ export class TicketService {
       ...(input.status !== undefined ? { status: input.status } : {}),
       ...(input.priority !== undefined ? { priority: input.priority } : {}),
       ...(input.assigneeId !== undefined ? { assigneeId: input.assigneeId } : {}),
+      ...scope,
       ...(cursor !== undefined ? { cursorCreatedAt: cursor.createdAt, cursorId: cursor.id } : {}),
       take: take + 1,
     });
@@ -264,6 +284,9 @@ export class TicketService {
     if (ticket === null) {
       throw new AppError("Ticket not found.", ErrorCode.TICKET_NOT_FOUND);
     }
+    if (ticket.status === "CLOSED") {
+      throw new AppError("Reopen a closed ticket before assigning it.", ErrorCode.VALIDATION_ERROR);
+    }
     const assignee = await this.users.findById(assigneeId);
     if (assignee === null) {
       throw new AppError("Assignee not found.", ErrorCode.USER_NOT_FOUND);
@@ -279,7 +302,7 @@ export class TicketService {
     return this.toView(updated);
   }
 
-  async changeStatus(ticketId: string, nextStatus: string) {
+  async changeStatus(actor: AuthUser, ticketId: string, nextStatus: string) {
     const status = requireStatus(nextStatus);
     const ticket = await this.tickets.findById(ticketId);
     if (ticket === null) {
@@ -290,18 +313,22 @@ export class TicketService {
     const data: {
       status: TicketStatus;
       resolvedAt?: Date;
+      assignee?: { connect: { id: string } };
     } = { status };
 
     if ((status === "RESOLVED" || status === "CLOSED") && ticket.resolvedAt === null) {
       data.resolvedAt = new Date();
+    }
+    if (ticket.assignee === null && shouldClaimUnassignedTicket(status)) {
+      data.assignee = { connect: { id: actor.id } };
     }
 
     const updated = await this.tickets.update(ticketId, data);
     return this.toView(updated);
   }
 
-  async resolveTicket(ticketId: string) {
-    return this.changeStatus(ticketId, "RESOLVED");
+  async resolveTicket(actor: AuthUser, ticketId: string) {
+    return this.changeStatus(actor, ticketId, "RESOLVED");
   }
 
   async addComment(actor: AuthUser, ticketId: string, content: string) {
@@ -313,6 +340,10 @@ export class TicketService {
     const ticket = await this.tickets.findById(ticketId);
     if (ticket === null) {
       throw new AppError("Ticket not found.", ErrorCode.TICKET_NOT_FOUND);
+    }
+
+    if (actor.role !== "AGENT" && ticket.reporterId !== actor.id) {
+      throw new AppError("You can only comment on your own tickets.", ErrorCode.FORBIDDEN);
     }
 
     const author = await this.users.findById(actor.id);
@@ -327,10 +358,24 @@ export class TicketService {
     });
 
     const isFirstResponse =
-      ticket.firstResponseAt === null && author.id !== ticket.reporterId;
+      ticket.firstResponseAt === null &&
+      author.role === "AGENT" &&
+      author.id !== ticket.reporterId;
+    const claimAsAgent =
+      ticket.assignee === null &&
+      author.role === "AGENT" &&
+      (ticket.status === "OPEN" || ticket.status === "IN_PROGRESS");
 
-    if (isFirstResponse) {
-      await this.tickets.update(ticketId, { firstResponseAt: comment.createdAt });
+    if (isFirstResponse || claimAsAgent) {
+      await this.tickets.update(ticketId, {
+        ...(isFirstResponse ? { firstResponseAt: comment.createdAt } : {}),
+        ...(claimAsAgent
+          ? {
+              assignee: { connect: { id: author.id } },
+              ...(ticket.status === "OPEN" ? { status: "IN_PROGRESS" as const } : {}),
+            }
+          : {}),
+      });
     }
 
     return {
@@ -341,10 +386,11 @@ export class TicketService {
     };
   }
 
-  async dashboard() {
+  async dashboard(actor: AuthUser) {
+    const reporterId = actor.role === "AGENT" ? undefined : actor.id;
     const [counts, openish] = await Promise.all([
-      this.tickets.countByStatus(),
-      this.tickets.listMatching({}),
+      this.tickets.countByStatus(reporterId),
+      this.tickets.listMatching(reporterId === undefined ? {} : { reporterId }),
     ]);
 
     const byStatus: Record<TicketStatus, number> = {

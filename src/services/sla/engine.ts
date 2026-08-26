@@ -38,24 +38,23 @@ function stateFromConsumption(consumedMinutes: number, budgetMinutes: number, br
 function evaluateClock(params: {
   createdAt: Date;
   budgetMinutes: number;
-  freezeAt: Date | null;
-  now: Date;
+  freezeAt: Date;
+  completed: boolean;
   holidays: HolidaySet;
   config: BusinessHoursConfig;
 }): SLAClock {
-  const { createdAt, budgetMinutes, freezeAt, now, holidays, config } = params;
+  const { createdAt, budgetMinutes, freezeAt, completed, holidays, config } = params;
   const dueAt = addBusinessMinutes(createdAt, budgetMinutes, holidays, config);
-  const stopAt = freezeAt ?? now;
-  const consumed = businessMinutesBetween(createdAt, stopAt, holidays, config);
-  const remainingRaw = businessMinutesBetween(stopAt, dueAt, holidays, config);
-  const breached = stopAt.getTime() > dueAt.getTime();
+  const consumed = businessMinutesBetween(createdAt, freezeAt, holidays, config);
+  const remainingRaw = businessMinutesBetween(freezeAt, dueAt, holidays, config);
+  const breached = freezeAt.getTime() > dueAt.getTime();
   const remainingMinutes = breached ? 0 : Math.max(0, Math.round(remainingRaw));
 
   return {
     dueAt,
     state: stateFromConsumption(consumed, budgetMinutes, breached),
     remainingMinutes,
-    completed: freezeAt !== null,
+    completed,
     budgetMinutes,
   };
 }
@@ -81,11 +80,12 @@ export function evaluateTicketSla(input: EvaluateSlaInput): SLAInfo {
   const config = input.config ?? DEFAULT_BUSINESS_HOURS;
   const policy = getSlaPolicy(input.priority);
 
+  const firstStop = input.firstResponseAt ?? input.resolvedAt ?? input.now;
   const firstResponse = evaluateClock({
     createdAt: input.createdAt,
     budgetMinutes: policy.firstResponseMinutes,
-    freezeAt: input.firstResponseAt,
-    now: input.now,
+    freezeAt: firstStop,
+    completed: input.firstResponseAt !== null,
     holidays: input.holidays,
     config,
   });
@@ -93,8 +93,8 @@ export function evaluateTicketSla(input: EvaluateSlaInput): SLAInfo {
   const resolution = evaluateClock({
     createdAt: input.createdAt,
     budgetMinutes: policy.resolutionMinutes,
-    freezeAt: input.resolvedAt,
-    now: input.now,
+    freezeAt: input.resolvedAt ?? input.now,
+    completed: input.resolvedAt !== null,
     holidays: input.holidays,
     config,
   });

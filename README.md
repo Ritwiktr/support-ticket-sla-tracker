@@ -64,12 +64,13 @@ Each clock is independently:
 
 Clocks **freeze** when their event happens:
 
-- First comment by someone other than the reporter → `firstResponseAt`
+- First **agent** comment (the reporter of the ticket does not count, even if that user is an agent) → `firstResponseAt`
 - Resolve / close without a prior resolution → `resolvedAt`
+- Close / resolve without an agent reply freezes the first-response clock at that instant so remaining time does not keep ticking. The clock is not marked completed unless an agent actually replied.
 
 A completed on-time clock never later becomes `BREACHED`. Remaining minutes for an active clock are business minutes from `now` to due; for a frozen clock they are business minutes from the event to due (0 if late).
 
-List filters and the dashboard use the **effective** SLA: first-response clock until it completes, then the resolution clock.
+List filters and the dashboard use the **effective** SLA: first-response clock until it completes, then the resolution clock. At-risk / breached filters without an explicit status only include **Open** and **In progress**, matching the dashboard cards.
 
 The UI only **displays** `firstResponseState`, `resolutionState`, and remaining minutes. It does not re-run business-hour math.
 
@@ -84,13 +85,23 @@ CLOSED      → OPEN                            (explicit reopen only)
 
 `CLOSED → IN_PROGRESS` is rejected with `INVALID_STATUS_TRANSITION`. Same-status updates are no-ops. Resolving or closing a ticket that has no `resolvedAt` freezes the resolution SLA.
 
+Assignment is kept in sync with work:
+
+- **Assign** an Open ticket → that agent owns it and status becomes `IN_PROGRESS`
+- **Start work** / **Resolve** on an unassigned ticket → claimed by the acting agent (existing assignee is never overwritten)
+- **Close** from the Open queue does **not** auto-assign
+- Returning `IN_PROGRESS → OPEN` keeps the assignee
+- An agent comment on an unassigned Open or In-progress ticket also claims it. Reporter comments do not.
+- Closed tickets cannot be assigned until they are reopened.
+
 ## Authentication
 
 - Passwords hashed with bcrypt (12 rounds), never stored in plain text
 - JWT (`Authorization: Bearer …`), 7-day expiry
 - Public `register` always creates a **REPORTER**. Requesting `AGENT` returns `FORBIDDEN`
-- Authenticated users may create tickets and comment
-- **AGENT** only: assign, change status, resolve
+- Authenticated users may create tickets and comment on tickets they can see
+- **REPORTER** users only list, open, and comment on **their own** tickets. Dashboard counts are scoped the same way
+- **AGENT** only: assign, change status, resolve, list users
 
 ## Environment variables
 
@@ -131,8 +142,11 @@ PostgreSQL is published on **host port 55432** to avoid clashing with a local Po
 
 | Email | Password | Role |
 | --- | --- | --- |
-| `reporter@example.com` | `Password123!` | REPORTER |
-| `agent@example.com` | `Password123!` | AGENT |
+| `reporter@example.com` | `Password123!` | REPORTER (Asha) |
+| `rahul.reporter@example.com` | `Password123!` | REPORTER (Rahul) |
+| `priya.reporter@example.com` | `Password123!` | REPORTER (Priya) |
+| `agent@example.com` | `Password123!` | AGENT (Vikram) |
+| `meera.agent@example.com` | `Password123!` | AGENT (Meera) |
 
 Holidays: Independence Day `2026-08-15`, Company Foundation Day `2026-08-17`.
 

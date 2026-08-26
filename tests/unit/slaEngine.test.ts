@@ -124,6 +124,23 @@ describe("SLA engine", () => {
     expect(sla.firstResponseState).toBe("BREACHED");
   });
 
+  it("freezes first-response consumption at resolvedAt without marking the reply complete", () => {
+    const created = at(2026, 1, 5, 9, 0);
+    const sla = evaluateTicketSla({
+      createdAt: created,
+      priority: "HIGH",
+      firstResponseAt: null,
+      resolvedAt: at(2026, 1, 5, 11, 0),
+      now: at(2026, 1, 20, 12, 0),
+      holidays: new Set(),
+      config,
+    });
+    expect(sla.firstResponseCompleted).toBe(false);
+    expect(sla.firstResponseState).toBe("ON_TRACK");
+    expect(sla.firstResponseRemainingMinutes).toBe(120);
+    expect(sla.resolutionCompleted).toBe(true);
+  });
+
   it("uses URGENT 1h / 4h policies", () => {
     const created = at(2026, 1, 5, 9, 0);
     const sla = evaluateTicketSla({

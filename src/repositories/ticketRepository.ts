@@ -13,12 +13,35 @@ export type TicketRecord = Prisma.TicketGetPayload<{ include: typeof ticketInclu
 
 export type TicketListFilters = {
   status?: TicketStatus;
+  statusIn?: TicketStatus[];
   priority?: Priority;
   assigneeId?: string;
+  reporterId?: string;
   cursorCreatedAt?: Date;
   cursorId?: string;
   take: number;
 };
+
+function buildWhere(
+  filters: Omit<TicketListFilters, "take" | "cursorCreatedAt" | "cursorId">,
+): Prisma.TicketWhereInput {
+  const where: Prisma.TicketWhereInput = {};
+  if (filters.status !== undefined) {
+    where.status = filters.status;
+  } else if (filters.statusIn !== undefined) {
+    where.status = { in: filters.statusIn };
+  }
+  if (filters.priority !== undefined) {
+    where.priority = filters.priority;
+  }
+  if (filters.assigneeId !== undefined) {
+    where.assigneeId = filters.assigneeId;
+  }
+  if (filters.reporterId !== undefined) {
+    where.reporterId = filters.reporterId;
+  }
+  return where;
+}
 
 export class TicketRepository {
   constructor(private readonly prisma: PrismaClient) {}
@@ -46,16 +69,7 @@ export class TicketRepository {
   }
 
   list(filters: TicketListFilters) {
-    const where: Prisma.TicketWhereInput = {};
-    if (filters.status !== undefined) {
-      where.status = filters.status;
-    }
-    if (filters.priority !== undefined) {
-      where.priority = filters.priority;
-    }
-    if (filters.assigneeId !== undefined) {
-      where.assigneeId = filters.assigneeId;
-    }
+    const where = buildWhere(filters);
     if (filters.cursorCreatedAt !== undefined && filters.cursorId !== undefined) {
       where.OR = [
         { createdAt: { lt: filters.cursorCreatedAt } },
@@ -72,26 +86,17 @@ export class TicketRepository {
   }
 
   listMatching(filters: Omit<TicketListFilters, "take" | "cursorCreatedAt" | "cursorId">) {
-    const where: Prisma.TicketWhereInput = {};
-    if (filters.status !== undefined) {
-      where.status = filters.status;
-    }
-    if (filters.priority !== undefined) {
-      where.priority = filters.priority;
-    }
-    if (filters.assigneeId !== undefined) {
-      where.assigneeId = filters.assigneeId;
-    }
     return this.prisma.ticket.findMany({
-      where,
+      where: buildWhere(filters),
       include: ticketInclude,
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     });
   }
 
-  countByStatus() {
+  countByStatus(reporterId?: string) {
     return this.prisma.ticket.groupBy({
       by: ["status"],
+      ...(reporterId !== undefined ? { where: { reporterId } } : {}),
       _count: { _all: true },
     });
   }

@@ -22,8 +22,8 @@ export const ticketResolvers = {
       },
       ctx: GraphQLContext,
     ) => {
-      requireUser(ctx);
-      return tickets(ctx).listTickets({
+      const user = requireUser(ctx);
+      return tickets(ctx).listTickets(user, {
         ...(args.status !== null && args.status !== undefined ? { status: args.status } : {}),
         ...(args.priority !== null && args.priority !== undefined ? { priority: args.priority } : {}),
         ...(args.assigneeId !== null && args.assigneeId !== undefined
@@ -35,12 +35,12 @@ export const ticketResolvers = {
       });
     },
     ticket: async (_parent: unknown, args: { id: string }, ctx: GraphQLContext) => {
-      requireUser(ctx);
-      return tickets(ctx).getTicket(args.id);
+      const user = requireUser(ctx);
+      return tickets(ctx).getTicket(user, args.id);
     },
     dashboard: async (_parent: unknown, _args: unknown, ctx: GraphQLContext) => {
-      requireUser(ctx);
-      return tickets(ctx).dashboard();
+      const user = requireUser(ctx);
+      return tickets(ctx).dashboard(user);
     },
   },
   Mutation: {
@@ -65,8 +65,8 @@ export const ticketResolvers = {
       args: { ticketId: string; status: TicketStatus },
       ctx: GraphQLContext,
     ) => {
-      requireAgent(ctx);
-      return tickets(ctx).changeStatus(args.ticketId, args.status);
+      const actor = requireAgent(ctx);
+      return tickets(ctx).changeStatus(actor, args.ticketId, args.status);
     },
     addComment: async (
       _parent: unknown,
@@ -77,8 +77,8 @@ export const ticketResolvers = {
       return tickets(ctx).addComment(user, args.ticketId, args.content);
     },
     resolveTicket: async (_parent: unknown, args: { ticketId: string }, ctx: GraphQLContext) => {
-      requireAgent(ctx);
-      return tickets(ctx).resolveTicket(args.ticketId);
+      const actor = requireAgent(ctx);
+      return tickets(ctx).resolveTicket(actor, args.ticketId);
     },
   },
 };

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertValidTransition } from "../../src/services/ticket/statusTransitions";
+import { assertValidTransition, shouldClaimUnassignedTicket } from "../../src/services/ticket/statusTransitions";
 import { AppError } from "../../src/validation/errors";
 import { ErrorCode } from "../../src/graphql/errors";
 import { requireNonEmpty, requirePriority } from "../../src/validation/ticket";
@@ -24,6 +24,13 @@ describe("status transitions", () => {
       expect((error as AppError).extensions.code).toBe(ErrorCode.INVALID_STATUS_TRANSITION);
       expect((error as AppError).message).toContain("CLOSED");
     }
+  });
+
+  it("claims unassigned tickets only when work starts or the issue is resolved", () => {
+    expect(shouldClaimUnassignedTicket("IN_PROGRESS")).toBe(true);
+    expect(shouldClaimUnassignedTicket("RESOLVED")).toBe(true);
+    expect(shouldClaimUnassignedTicket("OPEN")).toBe(false);
+    expect(shouldClaimUnassignedTicket("CLOSED")).toBe(false);
   });
 });
 

@@ -1,37 +1,53 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ApiError, api, type Priority, type SLAState, type Ticket, type TicketDashboard, type TicketStatus, type User } from "../api";
+import {
+  ApiError,
+  api,
+  type Holiday,
+  type Priority,
+  type SLAState,
+  type Ticket,
+  type TicketDashboard,
+  type TicketStatus,
+  type User,
+} from "../api";
 import { useAuth } from "../auth";
-import { formatLocal, slaLabel } from "../format";
+import { formatLocal, relativeTime } from "../format";
+import { Avatar, Badge, EmptyState, SlaChip, SlaRing } from "../ui";
 
 type SortKey = "created" | "priority" | "sla";
 
 const PRIORITY_RANK: Record<Priority, number> = { URGENT: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
 
 export function TicketsPage() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const isAgent = user?.role === "AGENT";
   const navigate = useNavigate();
   const [dashboard, setDashboard] = useState<TicketDashboard | null>(null);
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [agents, setAgents] = useState<User[]>([]);
+  const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [status, setStatus] = useState<TicketStatus | "">("");
   const [priority, setPriority] = useState<Priority | "">("");
   const [assigneeId, setAssigneeId] = useState("");
   const [slaState, setSlaState] = useState<SLAState | "">("");
   const [sortKey, setSortKey] = useState<SortKey>("created");
+  const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasNext, setHasNext] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (token === null) {
       return;
     }
     const authToken = token;
+    const loadAgents = isAgent;
     let cancelled = false;
     async function load() {
       try {
-        const [dash, list, users] = await Promise.all([
+        const [dash, list, users, holidayList] = await Promise.all([
           api.dashboard(authToken),
           api.tickets(authToken, {
             ...(status !== "" ? { status } : {}),
@@ -39,7 +55,8 @@ export function TicketsPage() {
             ...(assigneeId !== "" ? { assigneeId } : {}),
             ...(slaState !== "" ? { slaState } : {}),
           }),
-          api.users(authToken, "AGENT"),
+          loadAgents ? api.users(authToken, "AGENT") : Promise.resolve({ users: [] as User[] }),
+          api.holidays(authToken),
         ]);
         if (cancelled) {
           return;
@@ -49,10 +66,15 @@ export function TicketsPage() {
         setHasNext(list.tickets.pageInfo.hasNextPage);
         setCursor(list.tickets.pageInfo.endCursor);
         setAgents(users.users);
+        setHolidays(holidayList.holidays);
         setError(null);
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof ApiError ? `${err.code}: ${err.message}` : "Failed to load tickets.");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
         }
       }
     }
@@ -62,7 +84,7 @@ export function TicketsPage() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [token, status, priority, assigneeId, slaState]);
+  }, [token, isAgent, status, priority, assigneeId, slaState]);
 
   const sorted = useMemo(() => {
     const copy = [...tickets];
@@ -81,8 +103,22 @@ export function TicketsPage() {
       }
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
-    return copy;
-  }, [tickets, sortKey]);
+    const needle = query.trim().toLowerCase();
+    if (needle === "") {
+      return copy;
+    }
+    return copy.filter((ticket) => {
+      return (
+        ticket.title.toLowerCase().includes(needle) ||
+        ticket.description.toLowerCase().includes(needle) ||
+        ticket.id.toLowerCase().includes(needle) ||
+        (ticket.assignee?.name ?? "").toLowerCase().includes(needle) ||
+        ticket.reporter.name.toLowerCase().includes(needle)
+      );
+    });
+  }, [tickets, sortKey, query]);
+
+  const filtersActive = status !== "" || priority !== "" || assigneeId !== "" || slaState !== "" || query !== "";
 
   async function loadMore() {
     if (token === null || cursor === null) {
@@ -100,20 +136,88 @@ export function TicketsPage() {
     setCursor(list.tickets.pageInfo.endCursor);
   }
 
+  function clearFilters() {
+    setStatus("");
+    setPriority("");
+    setAssigneeId("");
+    setSlaState("");
+    setQuery("");
+  }
+
   return (
     <>
-      <h1 className="page-title">Support tickets</h1>
-      <p className="lede">SLA state and remaining time come from the API. Business-hour math stays on the server.</p>
+      <div className="page-head">
+        <div>
+          <p className="page-kicker">Queue</p>
+          <h1 className="page-title">Inbox</h1>
+          <p className="lede">SLA badges and remaining time come from the API. The browser only displays them.</p>
+        </div>
+        <Link className="btn" to="/tickets/new">New ticket</Link>
+      </div>
       {error !== null ? <div className="error">{error}</div> : null}
       {dashboard !== null ? (
-        <section className="grid-4">
-          <div className="stat"><span>Open</span><b>{dashboard.openTickets}</b></div>
-          <div className="stat"><span>In progress</span><b>{dashboard.inProgressTickets}</b></div>
-          <div className="stat risk"><span>At risk</span><b>{dashboard.atRiskTickets}</b></div>
-          <div className="stat breach"><span>Breached</span><b>{dashboard.breachedTickets}</b></div>
+        <section className="grid-4" aria-label="Queue snapshot">
+          <button
+            className={`stat ${status === "OPEN" ? "active" : ""}`}
+            type="button"
+            aria-pressed={status === "OPEN"}
+            onClick={() => setStatus((current) => (current === "OPEN" ? "" : "OPEN"))}
+          >
+            <div className="stat-label">Open</div>
+            <b>{dashboard.openTickets}</b>
+            <div className="stat-hint">Waiting to be picked up</div>
+          </button>
+          <button
+            className={`stat ${status === "IN_PROGRESS" ? "active" : ""}`}
+            type="button"
+            aria-pressed={status === "IN_PROGRESS"}
+            onClick={() => setStatus((current) => (current === "IN_PROGRESS" ? "" : "IN_PROGRESS"))}
+          >
+            <div className="stat-label">In progress</div>
+            <b>{dashboard.inProgressTickets}</b>
+            <div className="stat-hint">Actively being worked</div>
+          </button>
+          <button
+            className={`stat risk ${slaState === "AT_RISK" ? "active" : ""}`}
+            type="button"
+            aria-pressed={slaState === "AT_RISK"}
+            onClick={() => setSlaState((current) => (current === "AT_RISK" ? "" : "AT_RISK"))}
+          >
+            <div className="stat-label">At risk</div>
+            <b>{dashboard.atRiskTickets}</b>
+            <div className="stat-hint">Over 75% of SLA used</div>
+          </button>
+          <button
+            className={`stat breach ${slaState === "BREACHED" ? "active" : ""}`}
+            type="button"
+            aria-pressed={slaState === "BREACHED"}
+            onClick={() => setSlaState((current) => (current === "BREACHED" ? "" : "BREACHED"))}
+          >
+            <div className="stat-label">Breached</div>
+            <b>{dashboard.breachedTickets}</b>
+            <div className="stat-hint">Deadline already passed</div>
+          </button>
         </section>
       ) : null}
+      {holidays.length > 0 ? (
+        <div className="holiday-row">
+          <span className="holiday-label">Holidays freeze the clock</span>
+          {holidays.map((holiday) => (
+            <span className="holiday-chip" key={holiday.id}>
+              {holiday.date} · {holiday.name}
+            </span>
+          ))}
+        </div>
+      ) : null}
       <div className="filters">
+        <label className="search-field">
+          Search
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Title, reporter, assignee, or ticket id"
+          />
+        </label>
         <label>
           Status
           <select value={status} onChange={(e) => setStatus(e.target.value as TicketStatus | "")}>
@@ -134,15 +238,19 @@ export function TicketsPage() {
             <option>LOW</option>
           </select>
         </label>
-        <label>
-          Assignee
-          <select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}>
-            <option value="">All</option>
-            {agents.map((agent) => (
-              <option key={agent.id} value={agent.id}>{agent.name}</option>
-            ))}
-          </select>
-        </label>
+        {isAgent ? (
+          <label>
+            Assignee
+            <select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}>
+              <option value="">All</option>
+              {agents.map((agent) => (
+                <option key={agent.id} value={agent.id}>
+                  {agent.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <label>
           SLA
           <select value={slaState} onChange={(e) => setSlaState(e.target.value as SLAState | "")}>
@@ -160,45 +268,65 @@ export function TicketsPage() {
             <option value="sla">Least remaining SLA</option>
           </select>
         </label>
-        <Link to="/tickets/new"><button type="button">New ticket</button></Link>
+        {filtersActive ? (
+          <button className="ghost" type="button" onClick={clearFilters}>
+            Clear
+          </button>
+        ) : null}
       </div>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Ticket</th>
-              <th>Priority</th>
-              <th>Status</th>
-              <th>Assignee</th>
-              <th>SLA</th>
-              <th>Created</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((ticket) => {
-              const sla = slaLabel(ticket.sla);
-              return (
-                <tr key={ticket.id} className="clickable" onClick={() => navigate(`/tickets/${ticket.id}`)}>
-                  <td>
-                    <strong>#{ticket.id.slice(-6)}</strong> {ticket.title}
-                  </td>
-                  <td><span className={`badge ${ticket.priority}`}>{ticket.priority}</span></td>
-                  <td><span className={`badge ${ticket.status}`}>{ticket.status}</span></td>
-                  <td>{ticket.assignee?.name ?? "Unassigned"}</td>
-                  <td>
-                    <span className={`badge ${sla.state === "MET" ? "RESOLVED" : sla.state}`}>
-                      {sla.state === "BREACHED" ? "BREACHED" : sla.state === "MET" ? "Met" : `${sla.state} · ${sla.text}`}
-                    </span>
-                  </td>
-                  <td>{formatLocal(ticket.createdAt)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      <div className="list-toolbar">
+        <span>{loading ? "Refreshing queue…" : `${sorted.length} ticket${sorted.length === 1 ? "" : "s"}`}</span>
+        <span className="muted">Auto-refresh every 30s</span>
+      </div>
+      <div className="ticket-list">
+        {loading ? (
+          <div className="skeleton-list">
+            <div className="skeleton-row" />
+            <div className="skeleton-row" />
+            <div className="skeleton-row" />
+          </div>
+        ) : null}
+        {!loading && sorted.length === 0 ? (
+          <EmptyState
+            title="No tickets match these filters"
+            body="Clear a filter or raise a new ticket to get the queue moving."
+            action={<Link className="btn" to="/tickets/new">Raise ticket</Link>}
+          />
+        ) : null}
+        {!loading
+          ? sorted.map((ticket) => (
+              <button
+                className={`ticket-row ${ticket.priority}`}
+                key={ticket.id}
+                type="button"
+                onClick={() => navigate(`/tickets/${ticket.id}`)}
+              >
+                <SlaRing sla={ticket.sla} />
+                <span className="ticket-id">#{ticket.id.slice(-6)}</span>
+                <span>
+                  <span className="ticket-title">{ticket.title}</span>
+                  <span className="ticket-meta">
+                    <Avatar name={ticket.assignee?.name ?? ticket.reporter.name} size="sm" />
+                    {ticket.assignee?.name ?? "Unassigned"}
+                    <span>·</span>
+                    <span title={formatLocal(ticket.createdAt)}>{relativeTime(ticket.createdAt)}</span>
+                  </span>
+                </span>
+                <span className="ticket-flags">
+                  <Badge value={ticket.priority} />
+                  <Badge value={ticket.status} />
+                  <SlaChip sla={ticket.sla} />
+                </span>
+              </button>
+            ))
+          : null}
       </div>
       {hasNext ? (
-        <p><button className="secondary" type="button" onClick={() => void loadMore()}>Load more</button></p>
+        <p className="load-more">
+          <button className="secondary" type="button" onClick={() => void loadMore()}>
+            Load more
+          </button>
+        </p>
       ) : null}
     </>
   );

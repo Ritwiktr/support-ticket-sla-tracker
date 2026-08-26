@@ -16,6 +16,8 @@ Users, tickets, comments, holidays. Tickets store UTC `Timestamptz` values, incl
 
 ## SLA calculation
 
+First-response is the first **agent** comment. Closed tickets without a reply freeze that clock at close time without marking the reply complete.
+
 Default budgets are the assignment table (URGENT 1h/4h, HIGH 4h/24h, MEDIUM 8h/48h, LOW 24h/72h). Consumption ratio vs 75% uses a strict greater-than: **75.0% is ON_TRACK**, **75.0%+ε is AT_RISK**. Breach is `evaluationInstant > dueAt`.
 
 ## Business hours

@@ -23,7 +23,7 @@ const yoga = createYoga<GraphQLContext>({
   schema,
   graphqlEndpoint: "/graphql",
   cors: {
-    origin: env.webOrigin,
+    origin: [env.webOrigin, "http://localhost:5173", "http://localhost:5174"],
     credentials: true,
     allowedHeaders: ["Content-Type", "Authorization"],
   },
