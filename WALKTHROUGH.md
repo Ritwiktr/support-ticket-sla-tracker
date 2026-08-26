@@ -4,15 +4,15 @@
 
 The API is a GraphQL Yoga server with a **schema-first** `.graphql` file and TypeScript resolvers. Resolvers handle authz and then call services. Prisma repositories own SQL. The SLA engine is a pure function of `(createdAt, priority, freeze timestamps, now, holidays, timezone)` so it can be unit-tested without Yoga or Postgres.
 
-The React app is a Vite SPA. It displays SLA fields from the API and never decides ON_TRACK / AT_RISK / BREACHED itself.
+The React app is a Vite SPA. It displays SLA fields from the API and never decides ON_TRACK / AT_RISK / BREACHED itself. Inbox and ticket detail refetch those fields on a timer so remaining time updates while you watch.
 
 ## GraphQL schema
 
-Core types match the assignment: `Ticket`, `Priority`, `TicketStatus`, plus `SLAInfo`, `TicketConnection` (cursor pagination), `TicketDashboard`, `User`, `Holiday`, and auth mutations. Errors use GraphQL `extensions.code` values such as `VALIDATION_ERROR`, `TICKET_NOT_FOUND`, `FORBIDDEN`, and `INVALID_STATUS_TRANSITION`.
+Core types match the assignment: `Ticket`, `Priority`, `TicketStatus`, plus `SLAInfo`, `TicketConnection` (cursor pagination), `TicketDashboard`, `User`, `Holiday`, `TicketAuditEvent`, and auth mutations. Errors use GraphQL `extensions.code` values such as `VALIDATION_ERROR`, `TICKET_NOT_FOUND`, `FORBIDDEN`, `INVALID_STATUS_TRANSITION`, and `RATE_LIMITED`.
 
 ## Database schema
 
-Users, tickets, comments, holidays. Tickets store UTC `Timestamptz` values, including `firstResponseDueAt` / `resolutionDueAt` snapshots computed at creation. Due times are **recomputed live** when serving SLA so a holiday added to the calendar still affects open tickets. Comments cascade with tickets.
+Users, tickets, comments, holidays, and **ticket audit events**. Tickets store UTC `Timestamptz` values, including `firstResponseDueAt` / `resolutionDueAt` snapshots computed at creation. Due times are **recomputed live** when serving SLA so a holiday added to the calendar still affects open tickets. Comments and audit rows cascade with tickets. Postgres CHECK constraints reject empty titles/comments and inverted due dates.
 
 ## SLA calculation
 
@@ -40,11 +40,14 @@ Documented in the README. Closed tickets must be explicitly reopened to `OPEN` b
 
 ## Testing strategy
 
-- Unit: snap/add/elapsed business minutes, holiday/weekend/Friday-evening cases, AT_RISK/BREACHED/freeze, validation, illegal transitions
-- Integration: real Postgres — create ticket, reporter comment does not set `firstResponseAt`, agent comment does, second agent comment does not change it, due timestamps persisted
+- Unit: snap/add/elapsed business minutes, holiday/weekend/Friday-evening cases, AT_RISK/BREACHED/freeze, validation, illegal transitions, rate-limit window
+- Integration: real Postgres — create ticket, reporter comment does not set `firstResponseAt`, agent comment does, second agent comment does not change it, due timestamps persisted, start-work claims the agent, reporter isolation, audit rows for status/assignee
+- CI: GitHub Actions runs generate, migrate, typecheck, lint, and tests against Postgres 16
 
 ## Tradeoffs
 
 - SLA filtering paginates in memory after computing state, which is correct for this dataset size but would need a materialized column at scale
 - Reopening keeps `resolvedAt` / `firstResponseAt` so historical clocks stay frozen rather than starting a new SLA cycle
 - Self-registration cannot create agents
+- Rate limiting is in-process (per API instance), which is enough for this take-home; a multi-instance deploy would share a Redis counter instead
+- Audit values snapshot names at change time so history stays readable if a user is later renamed

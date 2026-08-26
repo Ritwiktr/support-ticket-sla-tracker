@@ -708,6 +708,47 @@ button:disabled, button:disabled:hover, button.primary:disabled:hover {
 .sla-meter.ON_TRACK .sla-fill { width: 48%; background: var(--ok); }
 .sla-fill.frozen { opacity: 0.7; }
 
+.live-sla {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+}
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 0 rgba(6, 118, 71, 0.45);
+  animation: live-pulse 1.6s ease-out infinite;
+}
+@keyframes live-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(6, 118, 71, 0.45); }
+  70% { box-shadow: 0 0 0 8px rgba(6, 118, 71, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(6, 118, 71, 0); }
+}
+
+.audit-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.audit-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+  font-size: 13px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.audit-list li:last-child { border-bottom: 0; padding-bottom: 0; }
+
 .priority-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

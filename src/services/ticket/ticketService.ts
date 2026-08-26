@@ -2,11 +2,7 @@ import type { PrismaClient, Priority, TicketStatus } from "@prisma/client";
 import { businessHoursConfig } from "../../config";
 import { ErrorCode } from "../../graphql/errors";
 import { HolidayRepository } from "../../repositories/holidayRepository";
-import {
-  CommentRepository,
-  TicketRepository,
-  type TicketRecord,
-} from "../../repositories/ticketRepository";
+import { TicketRepository, type TicketRecord } from "../../repositories/ticketRepository";
 import { UserRepository } from "../../repositories/userRepository";
 import {
   computeDueDates,
@@ -104,17 +100,45 @@ function assertCanViewTicket(actor: AuthUser, ticket: TicketRecord): void {
   }
 }
 
+type AuditDraft = {
+  ticketId: string;
+  actorId: string;
+  kind: "STATUS" | "ASSIGNEE";
+  fromValue: string | null;
+  toValue: string;
+};
+
+function assigneeLabel(ticket: TicketRecord): string {
+  return ticket.assignee?.name ?? "Unassigned";
+}
+
 export class TicketService {
   private readonly tickets: TicketRepository;
-  private readonly comments: CommentRepository;
   private readonly users: UserRepository;
   private readonly holidays: HolidayRepository;
 
-  constructor(prisma: PrismaClient) {
+  constructor(private readonly prisma: PrismaClient) {
     this.tickets = new TicketRepository(prisma);
-    this.comments = new CommentRepository(prisma);
     this.users = new UserRepository(prisma);
     this.holidays = new HolidayRepository(prisma);
+  }
+
+  private async commitTicketChange(
+    ticketId: string,
+    data: Parameters<TicketRepository["update"]>[1],
+    events: AuditDraft[],
+  ): Promise<TicketRecord> {
+    await this.prisma.$transaction(async (tx) => {
+      await tx.ticket.update({ where: { id: ticketId }, data });
+      if (events.length > 0) {
+        await tx.ticketAuditEvent.createMany({ data: events });
+      }
+    });
+    const updated = await this.tickets.findById(ticketId);
+    if (updated === null) {
+      throw new AppError("Ticket not found.", ErrorCode.TICKET_NOT_FOUND);
+    }
+    return updated;
   }
 
   async toView(ticket: TicketRecord, now = new Date()): Promise<TicketView> {
@@ -279,7 +303,7 @@ export class TicketService {
     };
   }
 
-  async assignTicket(ticketId: string, assigneeId: string) {
+  async assignTicket(actor: AuthUser, ticketId: string, assigneeId: string) {
     const ticket = await this.tickets.findById(ticketId);
     if (ticket === null) {
       throw new AppError("Ticket not found.", ErrorCode.TICKET_NOT_FOUND);
@@ -295,10 +319,34 @@ export class TicketService {
       throw new AppError("Tickets can only be assigned to agents.", ErrorCode.VALIDATION_ERROR);
     }
 
-    const updated = await this.tickets.update(ticketId, {
-      assignee: { connect: { id: assignee.id } },
-      ...(ticket.status === "OPEN" ? { status: "IN_PROGRESS" } : {}),
-    });
+    const events: AuditDraft[] = [];
+    if (ticket.assigneeId !== assignee.id) {
+      events.push({
+        ticketId,
+        actorId: actor.id,
+        kind: "ASSIGNEE",
+        fromValue: assigneeLabel(ticket),
+        toValue: assignee.name,
+      });
+    }
+    if (ticket.status === "OPEN") {
+      events.push({
+        ticketId,
+        actorId: actor.id,
+        kind: "STATUS",
+        fromValue: ticket.status,
+        toValue: "IN_PROGRESS",
+      });
+    }
+
+    const updated = await this.commitTicketChange(
+      ticketId,
+      {
+        assignee: { connect: { id: assignee.id } },
+        ...(ticket.status === "OPEN" ? { status: "IN_PROGRESS" } : {}),
+      },
+      events,
+    );
     return this.toView(updated);
   }
 
@@ -323,7 +371,28 @@ export class TicketService {
       data.assignee = { connect: { id: actor.id } };
     }
 
-    const updated = await this.tickets.update(ticketId, data);
+    const events: AuditDraft[] = [];
+    if (ticket.status !== status) {
+      events.push({
+        ticketId,
+        actorId: actor.id,
+        kind: "STATUS",
+        fromValue: ticket.status,
+        toValue: status,
+      });
+    }
+    if (ticket.assignee === null && shouldClaimUnassignedTicket(status)) {
+      const actorUser = await this.users.findById(actor.id);
+      events.push({
+        ticketId,
+        actorId: actor.id,
+        kind: "ASSIGNEE",
+        fromValue: "Unassigned",
+        toValue: actorUser?.name ?? actor.id,
+      });
+    }
+
+    const updated = await this.commitTicketChange(ticketId, data, events);
     return this.toView(updated);
   }
 
@@ -351,12 +420,6 @@ export class TicketService {
       throw new AppError("User not found.", ErrorCode.USER_NOT_FOUND);
     }
 
-    const comment = await this.comments.create({
-      content: body,
-      ticketId,
-      authorId: author.id,
-    });
-
     const isFirstResponse =
       ticket.firstResponseAt === null &&
       author.role === "AGENT" &&
@@ -366,17 +429,50 @@ export class TicketService {
       author.role === "AGENT" &&
       (ticket.status === "OPEN" || ticket.status === "IN_PROGRESS");
 
-    if (isFirstResponse || claimAsAgent) {
-      await this.tickets.update(ticketId, {
-        ...(isFirstResponse ? { firstResponseAt: comment.createdAt } : {}),
-        ...(claimAsAgent
-          ? {
-              assignee: { connect: { id: author.id } },
-              ...(ticket.status === "OPEN" ? { status: "IN_PROGRESS" as const } : {}),
-            }
-          : {}),
+    const events: AuditDraft[] = [];
+    if (claimAsAgent) {
+      events.push({
+        ticketId,
+        actorId: author.id,
+        kind: "ASSIGNEE",
+        fromValue: "Unassigned",
+        toValue: author.name,
       });
+      if (ticket.status === "OPEN") {
+        events.push({
+          ticketId,
+          actorId: author.id,
+          kind: "STATUS",
+          fromValue: "OPEN",
+          toValue: "IN_PROGRESS",
+        });
+      }
     }
+
+    const comment = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.comment.create({
+        data: { content: body, ticketId, authorId: author.id },
+        include: { author: true },
+      });
+      if (isFirstResponse || claimAsAgent) {
+        await tx.ticket.update({
+          where: { id: ticketId },
+          data: {
+            ...(isFirstResponse ? { firstResponseAt: created.createdAt } : {}),
+            ...(claimAsAgent
+              ? {
+                  assignee: { connect: { id: author.id } },
+                  ...(ticket.status === "OPEN" ? { status: "IN_PROGRESS" as const } : {}),
+                }
+              : {}),
+          },
+        });
+      }
+      if (events.length > 0) {
+        await tx.ticketAuditEvent.createMany({ data: events });
+      }
+      return created;
+    });
 
     return {
       id: comment.id,

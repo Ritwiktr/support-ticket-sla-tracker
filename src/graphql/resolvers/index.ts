@@ -11,4 +11,5 @@ export const resolvers = {
     ...authResolvers.Mutation,
     ...ticketResolvers.Mutation,
   },
+  Ticket: ticketResolvers.Ticket,
 };

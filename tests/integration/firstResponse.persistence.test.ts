@@ -146,6 +146,23 @@ describeIntegration("ticket persistence (PostgreSQL)", () => {
     expect(afterComment.status).toBe("IN_PROGRESS");
     expect(afterComment.firstResponseAt).not.toBeNull();
 
+    const startedEvents = await prisma.ticketAuditEvent.findMany({
+      where: { ticketId: created.id },
+      orderBy: { createdAt: "asc" },
+    });
+    expect(startedEvents.map((event) => `${event.kind}:${event.fromValue}:${event.toValue}`)).toEqual([
+      "STATUS:OPEN:IN_PROGRESS",
+      "ASSIGNEE:Unassigned:Integration Agent",
+      "STATUS:IN_PROGRESS:RESOLVED",
+    ]);
+
+    const commentEvents = await prisma.ticketAuditEvent.findMany({
+      where: { ticketId: commented.id },
+      orderBy: { createdAt: "asc" },
+    });
+    expect(commentEvents.some((event) => event.kind === "ASSIGNEE" && event.toValue === "Integration Agent")).toBe(true);
+    expect(commentEvents.some((event) => event.kind === "STATUS" && event.toValue === "IN_PROGRESS")).toBe(true);
+
     await prisma.comment.deleteMany({ where: { ticketId: { in: [created.id, queued.id, commented.id] } } });
     await prisma.ticket.deleteMany({ where: { id: { in: [created.id, queued.id, commented.id] } } });
     await prisma.user.delete({ where: { id: otherAgent.id } });
@@ -194,7 +211,7 @@ describeIntegration("ticket persistence (PostgreSQL)", () => {
     expect(closed.assignee).toBeNull();
 
     try {
-      await service.assignTicket(created.id, agentId);
+      await service.assignTicket({ id: agentId, role: "AGENT" }, created.id, agentId);
       throw new Error("expected assignTicket to fail");
     } catch (error) {
       expect(error).toBeInstanceOf(AppError);

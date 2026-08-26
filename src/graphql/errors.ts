@@ -10,6 +10,7 @@ export const ErrorCode = {
   INVALID_ROLE: "INVALID_ROLE",
   EMAIL_TAKEN: "EMAIL_TAKEN",
   INVALID_CREDENTIALS: "INVALID_CREDENTIALS",
+  RATE_LIMITED: "RATE_LIMITED",
 } as const;
 
 export type ErrorCodeName = (typeof ErrorCode)[keyof typeof ErrorCode];

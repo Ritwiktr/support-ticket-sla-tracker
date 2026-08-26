@@ -8,6 +8,8 @@ import { prisma } from "./db/prisma";
 import { resolvers } from "./graphql/resolvers/index";
 import { readBearerToken, verifyToken } from "./auth/jwt";
 import type { GraphQLContext } from "./auth/context";
+import { yogaPlugins } from "./http/yogaPlugins";
+import { logger } from "./observability/logger";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -22,6 +24,21 @@ const schema = createSchema<GraphQLContext>({
 const yoga = createYoga<GraphQLContext>({
   schema,
   graphqlEndpoint: "/graphql",
+  graphiql: {
+    title: "SLA Tracker",
+    defaultQuery: `# Seed agent login. Run this, copy token, then add:
+# Authorization: Bearer <token>
+# in the Headers tab for dashboard / tickets.
+
+mutation {
+  login(email: "agent@example.com", password: "Password123!") {
+    token
+    user { id name role }
+  }
+}
+`,
+  },
+  plugins: yogaPlugins,
   cors: {
     origin: [env.webOrigin, "http://localhost:5173", "http://localhost:5174"],
     credentials: true,
@@ -34,10 +51,18 @@ const yoga = createYoga<GraphQLContext>({
   },
 });
 
-const server = createServer(yoga);
+const server = createServer((req, res) => {
+  const path = req.url?.split("?")[0] ?? "/";
+  if (path === "/" || path === "") {
+    res.writeHead(302, { Location: "/graphql" });
+    res.end();
+    return;
+  }
+  yoga(req, res);
+});
 
 server.listen(env.port, () => {
-  console.info(`GraphQL API ready at http://localhost:${env.port}/graphql`);
+  logger.info("api.ready", { port: env.port, timezone: env.businessTimezone });
 });
 
 const shutdown = async () => {

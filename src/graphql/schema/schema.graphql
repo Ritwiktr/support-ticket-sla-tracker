@@ -23,6 +23,11 @@ enum SLAState {
   BREACHED
 }
 
+enum AuditEventKind {
+  STATUS
+  ASSIGNEE
+}
+
 type User {
   id: ID!
   name: String!
@@ -54,6 +59,15 @@ type SLAInfo {
   resolutionCompleted: Boolean!
 }
 
+type TicketAuditEvent {
+  id: ID!
+  kind: AuditEventKind!
+  fromValue: String
+  toValue: String!
+  actor: User!
+  createdAt: String!
+}
+
 type Ticket {
   id: ID!
   title: String!
@@ -67,6 +81,7 @@ type Ticket {
   resolvedAt: String
   sla: SLAInfo!
   comments: [Comment!]!
+  auditEvents: [TicketAuditEvent!]!
 }
 
 type PageInfo {

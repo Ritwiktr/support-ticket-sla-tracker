@@ -72,6 +72,7 @@ export function SlaMeter({
   dueAt,
   completed,
   dueLabel,
+  live,
 }: {
   title: string;
   state: SLAState;
@@ -79,6 +80,7 @@ export function SlaMeter({
   dueAt: string;
   completed: boolean;
   dueLabel: string;
+  live?: boolean;
 }) {
   return (
     <div className={`sla-meter ${state}`}>
@@ -95,6 +97,12 @@ export function SlaMeter({
           : `${formatMinutes(remainingMinutes)} remaining · due ${dueLabel}`}
       </p>
       <p className="muted">{new Date(dueAt).toLocaleString()}</p>
+      {live === true && !completed ? (
+        <p className="live-sla">
+          <span className="live-dot" aria-hidden="true" />
+          Live from API
+        </p>
+      ) : null}
     </div>
   );
 }

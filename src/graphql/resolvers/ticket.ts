@@ -57,8 +57,8 @@ export const ticketResolvers = {
       args: { ticketId: string; assigneeId: string },
       ctx: GraphQLContext,
     ) => {
-      requireAgent(ctx);
-      return tickets(ctx).assignTicket(args.ticketId, args.assigneeId);
+      const actor = requireAgent(ctx);
+      return tickets(ctx).assignTicket(actor, args.ticketId, args.assigneeId);
     },
     changeTicketStatus: async (
       _parent: unknown,
@@ -79,6 +79,28 @@ export const ticketResolvers = {
     resolveTicket: async (_parent: unknown, args: { ticketId: string }, ctx: GraphQLContext) => {
       const actor = requireAgent(ctx);
       return tickets(ctx).resolveTicket(actor, args.ticketId);
+    },
+  },
+  Ticket: {
+    auditEvents: async (parent: { id: string }, _args: unknown, ctx: GraphQLContext) => {
+      const rows = await ctx.prisma.ticketAuditEvent.findMany({
+        where: { ticketId: parent.id },
+        include: { actor: true },
+        orderBy: { createdAt: "asc" },
+      });
+      return rows.map((row) => ({
+        id: row.id,
+        kind: row.kind,
+        fromValue: row.fromValue,
+        toValue: row.toValue,
+        createdAt: row.createdAt.toISOString(),
+        actor: {
+          id: row.actor.id,
+          name: row.actor.name,
+          email: row.actor.email,
+          role: row.actor.role,
+        },
+      }));
     },
   },
 };

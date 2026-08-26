@@ -26,16 +26,22 @@ enum TicketStatus {
   CLOSED
 }
 
+enum AuditEventKind {
+  STATUS
+  ASSIGNEE
+}
+
 model User {
-  id           String    @id @default(cuid())
-  name         String
-  email        String    @unique
-  passwordHash String
-  role         UserRole
-  createdAt    DateTime  @default(now()) @db.Timestamptz(3)
-  reportedTickets Ticket[] @relation("TicketReporter")
-  assignedTickets Ticket[] @relation("TicketAssignee")
-  comments     Comment[]
+  id              String             @id @default(cuid())
+  name            String
+  email           String             @unique
+  passwordHash    String
+  role            UserRole
+  createdAt       DateTime           @default(now()) @db.Timestamptz(3)
+  reportedTickets Ticket[]           @relation("TicketReporter")
+  assignedTickets Ticket[]           @relation("TicketAssignee")
+  comments        Comment[]
+  auditEvents     TicketAuditEvent[]
 }
 
 model Ticket {
@@ -54,6 +60,7 @@ model Ticket {
   firstResponseDueAt   DateTime     @db.Timestamptz(3)
   resolutionDueAt      DateTime     @db.Timestamptz(3)
   comments             Comment[]
+  auditEvents          TicketAuditEvent[]
 
   @@index([status])
   @@index([priority])
@@ -61,6 +68,21 @@ model Ticket {
   @@index([createdAt])
   @@index([status, priority])
   @@index([reporterId])
+}
+
+model TicketAuditEvent {
+  id        String         @id @default(cuid())
+  ticketId  String
+  ticket    Ticket         @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  actorId   String
+  actor     User           @relation(fields: [actorId], references: [id])
+  kind      AuditEventKind
+  fromValue String?
+  toValue   String
+  createdAt DateTime       @default(now()) @db.Timestamptz(3)
+
+  @@index([ticketId, createdAt])
+  @@index([actorId])
 }
 
 model Comment {

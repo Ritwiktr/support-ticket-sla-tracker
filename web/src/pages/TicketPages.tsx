@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ApiError, api, type Priority, type Ticket, type TicketStatus } from "../api";
 import { useAuth } from "../auth";
@@ -275,6 +275,8 @@ export function TicketDetailPage({ ticketId }: { ticketId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const pendingRef = useRef(false);
+  pendingRef.current = pending;
   const isAgent = user?.role === "AGENT";
 
   async function reload() {
@@ -291,6 +293,24 @@ export function TicketDetailPage({ ticketId }: { ticketId: string }) {
     void reload().catch((err: unknown) => {
       setError(err instanceof ApiError ? `${err.code}: ${err.message}` : "Failed to load ticket.");
     });
+    if (token === null) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      if (pendingRef.current) {
+        return;
+      }
+      void api.ticket(token, ticketId).then((detail) => {
+        if (detail.ticket !== null) {
+          setTicket(detail.ticket);
+        }
+      }).catch(() => {
+        // Keep the current ticket on screen; the next interval retries.
+      });
+    }, 10_000);
+    return () => {
+      window.clearInterval(timer);
+    };
   }, [ticketId, token]);
 
   async function run(action: () => Promise<Ticket | void>, success?: string) {
@@ -420,6 +440,7 @@ export function TicketDetailPage({ ticketId }: { ticketId: string }) {
             dueAt={ticket.sla.firstResponseDueAt}
             completed={ticket.sla.firstResponseCompleted}
             dueLabel="first response"
+            live
           />
           <SlaMeter
             title="Resolution"
@@ -428,7 +449,28 @@ export function TicketDetailPage({ ticketId }: { ticketId: string }) {
             dueAt={ticket.sla.resolutionDueAt}
             completed={ticket.sla.resolutionCompleted}
             dueLabel="resolution"
+            live
           />
+          {(ticket.auditEvents ?? []).length > 0 ? (
+            <div>
+              <span className="section-kicker">History</span>
+              <ol className="audit-list">
+                {(ticket.auditEvents ?? []).map((event) => (
+                  <li key={event.id}>
+                    <div>
+                      <strong>{event.actor.name}</strong>
+                      <span className="muted">
+                        {event.kind === "STATUS"
+                          ? ` changed status ${prettyLabel(event.fromValue ?? "unknown")} → ${prettyLabel(event.toValue)}`
+                          : ` assigned ${event.fromValue ?? "Unassigned"} → ${event.toValue}`}
+                      </span>
+                    </div>
+                    <span className="muted">{relativeTime(event.createdAt)}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ) : null}
           {isAgent && token !== null && user !== null ? (
             <AgentActions
               ticket={ticket}

@@ -17,5 +17,22 @@ services:
       timeout: 5s
       retries: 20
 
+  api:
+    profiles: ["app"]
+    build: .
+    container_name: sla-tracker-api
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/sla_tracker
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      BUSINESS_TIMEZONE: Asia/Kolkata
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5173}
+      PORT: "4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   sla_tracker_pgdata:

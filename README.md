@@ -18,9 +18,11 @@ src/
   graphql/          schema + thin resolvers
   services/
     sla/            isolated business-hours / SLA engine
-    ticket/         ticket workflow, first response, dashboard
+    ticket/         ticket workflow, first response, dashboard, audit
     auth/           register / login
   repositories/     Prisma access
+  http/             rate limiting + Yoga plugins
+  observability/    JSON request logs
   validation/       input rules + AppError codes
   auth/             password hashing, JWT, GraphQL context
 prisma/             schema, migrations, seed
@@ -34,10 +36,13 @@ Resolvers authenticate, then call services. They never compute SLA state. The SL
 
 - **User** — name, unique email, bcrypt `passwordHash`, `REPORTER | AGENT`
 - **Ticket** — title, description, priority, status, reporter, optional assignee, `createdAt`, `firstResponseAt`, `resolvedAt`, persisted due timestamps
+- **TicketAuditEvent** — status and assignee changes (actor, previous value, new value, timestamp)
 - **Comment** — belongs to a ticket, records author
 - **Holiday** — unique calendar date + name
 
 Indexes exist on `status`, `priority`, `assigneeId`, `createdAt`, and `(status, priority)`.
+
+PostgreSQL also enforces non-empty names/titles/comments, emails that contain `@`, and `resolutionDueAt >= firstResponseDueAt`. Status-transition rules stay in application code because reopen keeps historical freeze timestamps.
 
 ## SLA calculation
 
@@ -72,7 +77,7 @@ A completed on-time clock never later becomes `BREACHED`. Remaining minutes for 
 
 List filters and the dashboard use the **effective** SLA: first-response clock until it completes, then the resolution clock. At-risk / breached filters without an explicit status only include **Open** and **In progress**, matching the dashboard cards.
 
-The UI only **displays** `firstResponseState`, `resolutionState`, and remaining minutes. It does not re-run business-hour math.
+The UI only **displays** `firstResponseState`, `resolutionState`, and remaining minutes. It does not re-run business-hour math. Inbox and ticket detail **refetch those API fields on an interval** so remaining time stays live as business minutes elapse.
 
 ## Status transition rules
 
@@ -114,6 +119,7 @@ See `.env.example`:
 | `BUSINESS_TIMEZONE` | IANA zone for business hours |
 | `PORT` | API port (default 4000) |
 | `WEB_ORIGIN` | CORS origin for the Vite app |
+| `RATE_LIMIT_DISABLED` | Set `1` to turn off in-memory rate limiting (`NODE_ENV=test` also disables it) |
 
 ## Setup
 
@@ -133,10 +139,18 @@ Recommended happy path once migrations are in the repo:
 docker compose up -d && npm install && npm run gendb && npm run dev
 ```
 
-- GraphQL API + GraphiQL: http://localhost:4000/graphql
-- Web UI: http://localhost:5173
+- GraphQL API + GraphiQL: http://localhost:4000/graphql (`http://localhost:4000` redirects here)
+- Web UI: http://localhost:5173 (or 5174 if 5173 is already taken)
 
 PostgreSQL is published on **host port 55432** to avoid clashing with a local Postgres on 5432.
+
+`docker compose up -d` starts **Postgres only**, so `npm run dev` can still bind port 4000. To run the API in Docker as well:
+
+```bash
+docker compose --profile app up --build
+```
+
+That container applies migrations on boot and serves GraphQL on port 4000. Keep using `npm run dev:web` for the Vite UI.
 
 ### Seed credentials
 
@@ -160,7 +174,19 @@ npm run typecheck
 npm run lint
 ```
 
-The integration test talks to **real PostgreSQL** via Prisma. It creates a ticket, a reporter comment, then an agent comment, and asserts `firstResponseAt` plus persisted due timestamps.
+The integration test talks to **real PostgreSQL** via Prisma. It creates a ticket, a reporter comment, then an agent comment, and asserts `firstResponseAt`, persisted due timestamps, claim-on-start-work, reporter isolation, and audit rows for status/assignee changes.
+
+GitHub Actions (`.github/workflows/ci.yml`) runs migrate, typecheck, lint, and the same Vitest suite against Postgres.
+
+## Bonus features included
+
+- **Dockerized API** — `Dockerfile` plus `docker compose --profile app`
+- **Database checks** — empty-string and due-date order constraints
+- **Audit trail** — `ticket.auditEvents` for status and assignee changes
+- **Live SLA remaining** — inbox every 15s, ticket detail every 10s, values still computed only on the server
+- **Rate limiting** — 20 login/register attempts per IP per 10 minutes; 300 GraphQL operations per IP per minute
+- **Observability** — JSON logs for each GraphQL operation (`operation`, `ms`, `userId`)
+- **CI pipeline** — GitHub Actions with Postgres
 
 ## Example GraphQL
 
@@ -193,15 +219,17 @@ mutation {
 
 Send `Authorization: Bearer <token>` on subsequent operations.
 
+Ticket history (status and assignee) is `auditEvents` on `ticket(id: …)`.
+
 ## How I'd extend this
 
 - Pause SLA clocks while `WAITING_ON_CUSTOMER`
-- Per-team calendars and holiday sets
-- Escalation notifications as AT_RISK / BREACHED thresholds are crossed
-- Audit log for assignee and status changes
+- Per-team calendars, holiday sets, and multiple timezones
+- Escalation / email notifications when AT_RISK or BREACHED is crossed
 - Recurring holidays (e.g. “every 15 August”)
 - Store a materialized effective SLA state for cheaper filtered pagination at scale
 - Agent performance metrics (first-response time, breach rate)
+- Browser end-to-end tests
 
 ## Walkthrough
 

@@ -28,6 +28,17 @@ export type Comment = {
   author: User;
 };
 
+export type AuditEventKind = "STATUS" | "ASSIGNEE";
+
+export type TicketAuditEvent = {
+  id: string;
+  kind: AuditEventKind;
+  fromValue: string | null;
+  toValue: string;
+  createdAt: string;
+  actor: User;
+};
+
 export type Ticket = {
   id: string;
   title: string;
@@ -41,6 +52,7 @@ export type Ticket = {
   resolvedAt: string | null;
   sla: SLAInfo;
   comments: Comment[];
+  auditEvents?: TicketAuditEvent[];
 };
 
 export type TicketConnection = {
@@ -116,6 +128,14 @@ const TICKET_FIELDS = `
   comments { id content createdAt author { id name email role } }
 `;
 
+const TICKET_DETAIL_FIELDS = `
+  ${TICKET_FIELDS}
+  auditEvents {
+    id kind fromValue toValue createdAt
+    actor { id name email role }
+  }
+`;
+
 export const api = {
   login: (email: string, password: string) =>
     gql<{ login: { token: string; user: User } }>(
@@ -168,7 +188,7 @@ export const api = {
       token,
     ),
   ticket: (token: string, id: string) =>
-    gql<{ ticket: Ticket | null }>(`query ($id: ID!) { ticket(id: $id) { ${TICKET_FIELDS} } }`, { id }, token),
+    gql<{ ticket: Ticket | null }>(`query ($id: ID!) { ticket(id: $id) { ${TICKET_DETAIL_FIELDS} } }`, { id }, token),
   users: (token: string, role?: UserRole) =>
     gql<{ users: User[] }>(
       `query ($role: UserRole) { users(role: $role) { id name email role } }`,
@@ -180,7 +200,7 @@ export const api = {
   createTicket: (token: string, input: { title: string; description: string; priority: Priority }) =>
     gql<{ createTicket: Ticket }>(
       `mutation ($title: String!, $description: String!, $priority: Priority!) {
-        createTicket(title: $title, description: $description, priority: $priority) { ${TICKET_FIELDS} }
+        createTicket(title: $title, description: $description, priority: $priority) { ${TICKET_DETAIL_FIELDS} }
       }`,
       input,
       token,
@@ -198,7 +218,7 @@ export const api = {
   assignTicket: (token: string, ticketId: string, assigneeId: string) =>
     gql<{ assignTicket: Ticket }>(
       `mutation ($ticketId: ID!, $assigneeId: ID!) {
-        assignTicket(ticketId: $ticketId, assigneeId: $assigneeId) { ${TICKET_FIELDS} }
+        assignTicket(ticketId: $ticketId, assigneeId: $assigneeId) { ${TICKET_DETAIL_FIELDS} }
       }`,
       { ticketId, assigneeId },
       token,
@@ -206,14 +226,14 @@ export const api = {
   changeTicketStatus: (token: string, ticketId: string, status: TicketStatus) =>
     gql<{ changeTicketStatus: Ticket }>(
       `mutation ($ticketId: ID!, $status: TicketStatus!) {
-        changeTicketStatus(ticketId: $ticketId, status: $status) { ${TICKET_FIELDS} }
+        changeTicketStatus(ticketId: $ticketId, status: $status) { ${TICKET_DETAIL_FIELDS} }
       }`,
       { ticketId, status },
       token,
     ),
   resolveTicket: (token: string, ticketId: string) =>
     gql<{ resolveTicket: Ticket }>(
-      `mutation ($ticketId: ID!) { resolveTicket(ticketId: $ticketId) { ${TICKET_FIELDS} } }`,
+      `mutation ($ticketId: ID!) { resolveTicket(ticketId: $ticketId) { ${TICKET_DETAIL_FIELDS} } }`,
       { ticketId },
       token,
     ),

@@ -17,6 +17,8 @@ export const env = {
   businessTimezone: optional("BUSINESS_TIMEZONE", DEFAULT_BUSINESS_HOURS.timezone),
   port: Number.parseInt(optional("PORT", "4000"), 10),
   webOrigin: optional("WEB_ORIGIN", "http://localhost:5173"),
+  rateLimitDisabled:
+    optional("RATE_LIMIT_DISABLED", "") === "1" || optional("NODE_ENV", "") === "test",
 };
 
 export const businessHoursConfig = {

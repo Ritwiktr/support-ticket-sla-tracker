@@ -79,7 +79,7 @@ export function TicketsPage() {
       }
     }
     void load();
-    const timer = window.setInterval(() => void load(), 30_000);
+    const timer = window.setInterval(() => void load(), 15_000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
@@ -150,7 +150,7 @@ export function TicketsPage() {
         <div>
           <p className="page-kicker">Queue</p>
           <h1 className="page-title">Inbox</h1>
-          <p className="lede">SLA badges and remaining time come from the API. The browser only displays them.</p>
+          <p className="lede">SLA badges and remaining time come from the API and refresh live. The browser only displays them.</p>
         </div>
         <Link className="btn" to="/tickets/new">New ticket</Link>
       </div>
@@ -276,7 +276,7 @@ export function TicketsPage() {
       </div>
       <div className="list-toolbar">
         <span>{loading ? "Refreshing queue…" : `${sorted.length} ticket${sorted.length === 1 ? "" : "s"}`}</span>
-        <span className="muted">Auto-refresh every 30s</span>
+        <span className="muted">Live SLA · auto-refresh every 15s</span>
       </div>
       <div className="ticket-list">
         {loading ? (
